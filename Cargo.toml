@@ -1,0 +1,19 @@
+[package]
+name = "rememberall"
+version = "0.1.0"
+authors = ["Nicholas Yager <yager@nicholasyager.com>"]
+
+[[bin]]
+name = "rememberall"
+path = "src/rememberall.rs"
+
+[dependencies]
+glob = "*"
+rust-crypto = "0.2.36"
+csv = "0.14"
+docopt = "0.6"
+rustc-serialize = "0.3"  # if you're using `derive(RustcDecodable)`
+colored = "1.2"
+
+[dependencies.stem]
+git = "https://github.com/mrordinaire/rust-stem"
