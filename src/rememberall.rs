@@ -16,6 +16,7 @@ use std::io::Write;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use colored::*;
+use std::env;
 
 const USAGE: &'static str = "
 rememberall - More magical than the original.
@@ -52,11 +53,11 @@ impl Corpus {
         }
     }
 
-    fn load_corpus() -> Corpus {
+    fn load_corpus(home_dir: String) -> Corpus {
 
         let mut corpus: Corpus = Corpus::new();
 
-        let mut corpus_file = fs::File::open("/Users/nyager/.rememberall/corpus.csv").unwrap();
+        let mut corpus_file = fs::File::open(home_dir.clone()+"/.rememberall/corpus.csv").unwrap();
         let mut corpus_buffer = String::new();
         let _ = corpus_file.read_to_string(&mut corpus_buffer);
         let mut corpus_csv_reader = csv::Reader::from_string(corpus_buffer).has_headers(false);
@@ -71,7 +72,7 @@ impl Corpus {
         }
 
         // Load the index.
-        let mut index_file = fs::File::open("/Users/nyager/.rememberall/index.csv").unwrap();
+        let mut index_file = fs::File::open(home_dir+"/.rememberall/index.csv").unwrap();
         let mut index_buffer = String::new();
         let _ = index_file.read_to_string(&mut index_buffer);
 
@@ -143,8 +144,8 @@ impl Corpus {
         }
     }
 
-    fn save(&self) {
-        let mut corpus_file = fs::File::create("/Users/nyager/.rememberall/corpus.csv").unwrap();
+    fn save(&self, home_dir: String) {
+        let mut corpus_file = fs::File::create(home_dir+"/.rememberall/corpus.csv").unwrap();
         for (id, document) in &self.documents {
             let _ = corpus_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",\"{}\"\n",
                                           document.source, document.title, document.text, id));
@@ -270,12 +271,23 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
     }
 }
 
-fn search(args: Args) {
-    let corpus = Corpus::load_corpus();
+fn search(args: Args, home_dir: String) {
+    let corpus = Corpus::load_corpus(home_dir);
     let mut total_score = 0.0_f32;
 
     let mut results: Vec<(String, f32)> = Vec::new();
     let mut scaled_results: Vec<(String, u32)> = Vec::new();
+
+    let mut stems: HashSet<String> = HashSet::new();
+
+
+    for term in &args.arg_term {
+            let s = stem::get(&term);
+            match s {
+                Ok(stemmed) => stems.insert(stemmed),
+                Err(_) => stems.insert(term.clone()),
+            };
+    }
 
     for (id, document) in &corpus.documents {
         let mut score = 0.0_f32;
@@ -284,7 +296,7 @@ fn search(args: Args) {
                 Some(value) => *value,
                 _ => 0.0_f32
             };
-            for term in &args.arg_term {
+            for term in &stems {
 
                 if *cursor_term != *term {
                     continue;
@@ -330,9 +342,9 @@ fn search(args: Args) {
 
 }
 
-fn index(args: Args) {
+fn index(args: Args, home_dir: String) {
     // Try to create the data directory
-    match fs::create_dir("/Users/nyager/.rememberall") {
+    match fs::create_dir(home_dir.clone() + "/.rememberall") {
         Ok(directory) => directory,
         Err(_) => println!("Updating."),
     };
@@ -359,7 +371,7 @@ fn index(args: Args) {
     corpus.inverse_document_frequency();
 
     // Calculate the term frequency inverse document frequency and write to disk
-    let mut index_file = fs::File::create("/Users/nyager/.rememberall/index.csv").unwrap();
+    let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
     //let document_list = corpus.documents.clone();
     for (id, document) in &corpus.documents {
         for (term, frequency) in &document.terms {
@@ -372,7 +384,7 @@ fn index(args: Args) {
             let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",{}\n", id, term, frequency, tf_idf));
         }
     }
-    corpus.save();
+    corpus.save(home_dir.clone());
     println!("Index {} documents, {} terms.", corpus.documents.len(), corpus.terms.len());
 }
 
@@ -382,10 +394,25 @@ fn main() {
     .and_then(|d| d.decode())
     .unwrap_or_else(|e| e.exit());
 
+    // Get the user's home directory
+
+    let mut home_dir: String = String::new();
+    
+    match env::home_dir() {
+        Some(path) => {
+            home_dir = path.to_str().unwrap().to_string();
+        },
+        None => {
+            println!("Please set your $HOME variable");
+            std::process::exit(0);
+        },
+    };
+
+
     if args.cmd_index {
-        index(args);
+        index(args, home_dir);
     } else if args.cmd_search {
-        search(args);
+        search(args, home_dir);
     }
 
 }
