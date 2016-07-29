@@ -216,7 +216,8 @@ impl Document {
 
     fn term_frequency(&mut self) {
         // Calculate the term frequency for all of the terms in the document.
-        let term_list: Vec<&str> = self.text.split(|c| c == ' ' || c == '\n').collect();
+        let text = self.text.replace("<ul>"," ").replace("["," ").replace("**"," ").to_string();
+        let term_list: Vec<&str> = text.split_whitespace().collect();
 
         let mut stems: HashSet<String> = HashSet::new();
 
@@ -285,8 +286,13 @@ fn search(args: Args) {
                 _ => 0.0_f32
             };
             for term in &args.arg_term {
+                let stem_result = stem::get(&term);
+                let stem = match stem_result {
+                    Ok(stemmed) => stemmed,
+                    Err(_) => term.clone(),
+                };
 
-                if *cursor_term != *term {
+                if *cursor_term != *stem {
                     continue;
                 }
                 score += idf*tf;
