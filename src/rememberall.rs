@@ -123,17 +123,21 @@ impl Corpus {
 
     fn document_frequency(&mut self) {
         let number_of_documents = self.documents.len() as f32;
-
+        let mut term_counts: HashMap<String, f32> = HashMap::new();
         for (_, document) in &mut self.documents {
 
             for (term, _) in &mut document.terms {
                 // Check if the string is already present in the map. If not, add it.
-                let count: f32 = match self.terms.get(term) {
+                let count: f32 = match term_counts.get(term) {
                     Some(count) => count + 1.0f32,
                     _ => 1.0f32,
                 };
-                self.terms.insert(term.to_string(), count);
+                term_counts.insert(term.to_string(), count);
             }
+        }
+
+        for (term, count) in &mut term_counts {
+            self.terms.insert(term.to_string(), *count/number_of_documents);
         }
 
     }
@@ -209,7 +213,8 @@ impl Document {
 
     fn term_frequency(&mut self) {
         // Calculate the term frequency for all of the terms in the document.
-        let text = self.text.replace("<ul>"," ").replace("["," ").replace("**"," ").to_string();
+        let merged = self.text.clone() + " " + &self.title;
+        let text = merged.replace("<ul>"," ").replace("["," ").replace("**"," ").replace(":","").to_string();
         let term_list: Vec<&str> = text.split_whitespace().collect();
 
         let mut stems: HashSet<String> = HashSet::new();
@@ -266,9 +271,10 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
 
 fn search(args: Args, home_dir: String) {
     let corpus = Corpus::load_corpus(home_dir);
-    let mut total_score = 0.0_f32;
+    let number_of_documents : f32 = corpus.documents.len() as f32;
+    let mut max_score = 0.0_f32;
 
-    let mut results: Vec<(String, f32)> = Vec::new();
+    let mut results: HashMap<String, f32> = HashMap::new();
     let mut scaled_results: Vec<(String, u32)> = Vec::new();
 
     let mut stems: HashSet<String> = HashSet::new();
@@ -282,34 +288,44 @@ fn search(args: Args, home_dir: String) {
             };
     }
 
-    for (id, document) in &corpus.documents {
-        let mut score = 0.0_f32;
-        for (cursor_term, tf) in &document.terms {
-            let idf: f32 = match corpus.terms.get(cursor_term) {
+    for stem in &stems {
+        let term_frequency: f32 = match corpus.terms.get(stem) {
+            Some(value) => *value,
+            _ => 0.0_f32
+        };
+
+        if term_frequency == 0.0_f32 {
+            continue;
+        }
+
+        for (id, document) in &corpus.documents {
+            let document_term_frequency: f32 = match document.terms.get(stem) {
                 Some(value) => *value,
                 _ => 0.0_f32
             };
-            for term in &args.arg_term {
-                let stem_result = stem::get(&term);
-                let stem = match stem_result {
-                    Ok(stemmed) => stemmed,
-                    Err(_) => term.clone(),
-                };
-
-                if *cursor_term != *stem {
-                    continue;
-                }
-                score += idf*tf;
-            }
-        }
-        total_score += score;
-        if score > 0.0_f32 {
-            results.push((id.to_string(), score));
+            let current_value = match results.get(id) {
+                Some(value) => *value,
+                None => 1.0_f32
+            };
+            let p = document_term_frequency*(1.0_f32/number_of_documents)/term_frequency;
+            results.insert(id.to_string(), current_value * (p/(p+(1.0_f32-p))));
         }
     }
 
+    for (_, score) in results.clone() {
+        if score > max_score {
+            max_score = score;
+        }
+    }
+
+    if max_score == 0.0_f32 {
+        let string: String = "No likely results found.".to_string();
+        println!("{}", string.red());
+        std::process::exit(1);
+    }
+
     for (id, score) in results {
-        let rank: u32 = ((score/total_score) * 100000.0_f32) as u32;
+        let rank: u32 = (score * 100000.0_f32) as u32;
         scaled_results.push((id,rank));
     }
 
@@ -367,19 +383,17 @@ fn index(args: Args, home_dir: String) {
 
     }
     corpus.document_frequency();
-
     // Calculate the term frequency inverse document frequency and write to disk
     let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
     //let document_list = corpus.documents.clone();
     for (id, document) in &corpus.documents {
         for (term, frequency) in &document.terms {
             // Get the inverse document frequency from the corpus
-            let inverse_document_frequency: f32 = match corpus.terms.get(term) {
+            let term_frequency: f32 = match corpus.terms.get(term) {
                 Some(count) => *count,
                 _ => 0.0_f32,
             };
-            let tf_idf = frequency * inverse_document_frequency;
-            let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",{}\n", id, term, frequency, tf_idf));
+            let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n", id, term, frequency, term_frequency));
         }
     }
     corpus.save(home_dir.clone());
