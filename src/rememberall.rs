@@ -121,7 +121,7 @@ impl Corpus {
         }
     }
 
-    fn inverse_document_frequency(&mut self) {
+    fn document_frequency(&mut self) {
         let number_of_documents = self.documents.len() as f32;
 
         for (_, document) in &mut self.documents {
@@ -136,12 +136,6 @@ impl Corpus {
             }
         }
 
-        let term_list = self.terms.clone();
-
-        for (term, count) in term_list {
-            let idf = number_of_documents/(count + 1.0);
-            self.terms.insert(term.to_string(), idf.ln());
-        }
     }
 
     fn save(&self, home_dir: String) {
@@ -202,8 +196,6 @@ impl Document {
             }
             index += 1;
         }
-
-
 
         return Document {
             title: title,
@@ -374,7 +366,7 @@ fn index(args: Args, home_dir: String) {
         corpus.load_text(path);
 
     }
-    corpus.inverse_document_frequency();
+    corpus.document_frequency();
 
     // Calculate the term frequency inverse document frequency and write to disk
     let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
