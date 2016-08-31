@@ -191,7 +191,7 @@ impl Document {
         for line in lines {
             if index == 0 {
                 // This is the first line. It is the title
-                title = line.trim().to_string();
+                title = line.trim().replace("\"","'").to_string();
             } else {
                 // This is the text. If the current text is not empty, add a space.
                 let filtered_line = line.replace("    ","\t");
@@ -205,7 +205,7 @@ impl Document {
             title: title,
             source: String::new(),
             text: text.trim_right().replace("\n","<br>").replace("\"","'").replace("\t"," ")
-                      .to_string(),
+                      .to_string().replace('"', "'"),
             terms: HashMap::new(),
         }
 
@@ -325,7 +325,7 @@ fn search(args: Args, home_dir: String) {
     }
 
     for (id, score) in results {
-        let rank: u32 = (score * 100000.0_f32) as u32;
+        let rank: u32 = (score * 1000000000.0_f32) as u32;
         scaled_results.push((id,rank));
     }
 
@@ -343,7 +343,7 @@ fn search(args: Args, home_dir: String) {
         match corpus.documents.get(&id) {
             Some(doc) => {
                 let score_float: f32 = score as f32;
-                let scaled_score = score_float/100000.0_f32;
+                let scaled_score = score_float/1000000000.0_f32;
                 let score_string: String = scaled_score.to_string();
                 println!("{}\n{}\n{}\n\n    {}\n\n",
                         doc.title.green(), doc.source, score_string.yellow(), doc.text)
