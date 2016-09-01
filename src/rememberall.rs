@@ -42,7 +42,7 @@ struct Args {
 
 struct Corpus {
     documents: HashMap<String, Document>,
-    terms: HashMap<String, f32>,
+    terms: HashMap<String, i32>,
 }
 
 impl Corpus {
@@ -62,12 +62,13 @@ impl Corpus {
         let _ = corpus_file.read_to_string(&mut corpus_buffer);
         let mut corpus_csv_reader = csv::Reader::from_string(corpus_buffer).has_headers(false);
         for row in corpus_csv_reader.decode() {
-            let (source, title, text, id): (String, String, String, String) = row.unwrap();
+            let (source, title, text, id, length): (String, String, String, String, i32) = row.unwrap();
             corpus.documents.insert(id, Document {
                 title: title,
                 source: source,
                 text: text.replace("<br><ul>", "\n    *   ").replace("<ul>", "*   ").replace("<br>","\n       "),
                 terms: HashMap::new(),
+                length: length
             });
         }
 
@@ -79,13 +80,13 @@ impl Corpus {
         let mut index_csv_reader = csv::Reader::from_string(index_buffer).has_headers(false);
 
         for row in index_csv_reader.decode() {
-            let (id, word, tf, tf_idf): (String, String, f32, f32) = row.unwrap();
+            let (id, word, doc_freq, term_freq): (String, String, i32, i32) = row.unwrap();
 
             match corpus.documents.get_mut(&id) {
-                Some(doc) => doc.terms.insert(word.clone(), tf),
+                Some(doc) => doc.terms.insert(word.clone(), doc_freq),
                 _ => continue
             };
-            corpus.terms.insert(word, tf_idf/tf);
+            corpus.terms.insert(word, term_freq);
         }
         return corpus;
     }
@@ -122,31 +123,25 @@ impl Corpus {
     }
 
     fn document_frequency(&mut self) {
-        let number_of_documents = self.documents.len() as f32;
-        let mut term_counts: HashMap<String, f32> = HashMap::new();
+        let number_of_documents = self.documents.len() as i32;
         for (_, document) in &mut self.documents {
 
             for (term, _) in &mut document.terms {
                 // Check if the string is already present in the map. If not, add it.
-                let count: f32 = match term_counts.get(term) {
-                    Some(count) => count + 1.0f32,
-                    _ => 1.0f32,
+                let count: i32 = match self.terms.get(term) {
+                    Some(count) => count + 1,
+                    _ => 1,
                 };
-                term_counts.insert(term.to_string(), count);
+                self.terms.insert(term.to_string(), count);
             }
         }
-
-        for (term, count) in &mut term_counts {
-            self.terms.insert(term.to_string(), *count/number_of_documents);
-        }
-
     }
 
     fn save(&self, home_dir: String) {
         let mut corpus_file = fs::File::create(home_dir+"/.rememberall/corpus.csv").unwrap();
         for (id, document) in &self.documents {
-            let _ = corpus_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                                          document.source, document.title, document.text, id));
+            let _ = corpus_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
+                                          document.source, document.title, document.text, id, document.length));
         }
     }
 
@@ -161,7 +156,8 @@ struct Document {
     title: String,
     source: String,
     text: String,
-    terms: HashMap<String, f32>,
+    terms: HashMap<String, i32>,
+    length: i32
 }
 
 impl Clone for Document {
@@ -171,6 +167,7 @@ impl Clone for Document {
             source: self.source.clone(),
             text: self.text.clone(),
             terms: self.terms.clone(),
+            length: self.length.clone()
         }
     }
 }
@@ -207,6 +204,7 @@ impl Document {
             text: text.trim_right().replace("\n","<br>").replace("\"","'").replace("\t"," ")
                       .to_string().replace('"', "'"),
             terms: HashMap::new(),
+            length: 0
         }
 
     }
@@ -220,32 +218,26 @@ impl Document {
         let mut stems: HashSet<String> = HashSet::new();
 
 
-        for term in term_list {
+        for term in term_list.clone() {
 
             // Clense the terms. Make lowercase and remove extra symobls.
             let clean_term = term.to_lowercase().replace(".", "").replace("\t"," ")
             .replace(",","").replace("\"","").replace("<br>", " ").replace("<li>", "");
 
             let s = stem::get(&clean_term);
-            match s {
-                Ok(stemmed) => stems.insert(stemmed),
-                Err(_) => stems.insert(clean_term.clone()),
+            let stem = match s {
+                Ok(stemmed) => stemmed,
+                Err(_) => clean_term.clone(),
             };
-
-        }
-        
-        let number_of_terms = stems.len() as f32;
-       
-        for term in stems{
 
             // Check if the string is already present in the map. If not, add it.
-            let count: f32 = match self.terms.get(&term) {
-                Some(count) => count + (1.0/ number_of_terms),
-                _ => (1.0f32/ number_of_terms),
+            let count: i32 = match self.terms.get(&stem) {
+                Some(count) => count + 1,
+                _ => 1,
             };
-
-            self.terms.insert(term.to_string(), count);
+            self.terms.insert(stem.to_string(), count);
         }
+        self.length = term_list.len() as i32;
     }
 
 
@@ -269,17 +261,13 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
     }
 }
 
+
 fn search(args: Args, home_dir: String) {
     let corpus = Corpus::load_corpus(home_dir);
-    let number_of_documents : f32 = corpus.documents.len() as f32;
-    let mut max_score = 0.0_f32;
+    let number_of_documents : i32 = corpus.documents.len() as i32;
 
-    let mut results: HashMap<String, f32> = HashMap::new();
-    let mut scaled_results: Vec<(String, u32)> = Vec::new();
-
+    // Stem the input.
     let mut stems: HashSet<String> = HashSet::new();
-
-
     for term in &args.arg_term {
             let s = stem::get(&term);
             match s {
@@ -288,30 +276,97 @@ fn search(args: Args, home_dir: String) {
             };
     }
 
+
+
+    // Bayesian Classification
+    // For this step we need three things:
+    // 1. The prior probability of this document being chosen.
+    // 2. The likelihood of the words occuring in the document
+    // 3. The evidence. This is the hard part.
+    
+    // The Prior
+    let prior: f32 = 1_f32 / (number_of_documents as f32);
+
+
+    // The likelihood.
+    // This can be described as the mutliplication of all of the 
+    // document_term_frequencies for each stem and document.
+    let mut likelihoods: HashMap<String, f32> = HashMap::new();
     for stem in &stems {
-        let term_frequency: f32 = match corpus.terms.get(stem) {
+
+        for (id, document) in &corpus.documents {
+            let document_term_frequency: i32 = match document.terms.get(stem) {
+                Some(value) => *value,
+                _ => 0
+            };
+            let current_value = match likelihoods.get(id) {
+                Some(value) => *value,
+                None => 1.0_f32
+            };
+            if current_value == 0.0 {
+                continue;
+            }
+            let likelihood = (document_term_frequency as f32) / (document.length as f32); 
+            likelihoods.insert(id.to_string(), current_value * likelihood);
+        }
+    }
+
+    // The Evidence.
+    // For each document, calculate add the likelihood to the inverse of the
+    // likelihood. That is, the inverse prior and the probability of 
+    // obserserving the word in all of the other documents.
+    let mut evidences: HashMap<String, f32> = HashMap::new();
+    let mut all_words = 0;
+    for (_, document) in &corpus.documents {
+        all_words += document.length;
+    }
+
+    for stem in &stems {
+        for (id, document) in &corpus.documents {
+            let mut other_occurances = 0;
+            for (comparison_id, comparison_document) in &corpus.documents {
+                if id == comparison_id {
+                    continue;
+                }
+
+                let document_term_frequency: i32 = match comparison_document.terms.get(stem) {
+                    Some(value) => *value,
+                    _ => 0
+                };
+
+                other_occurances += document_term_frequency;
+            }
+             let current_value = match evidences.get(id) {
+                Some(value) => *value,
+                None => 1.0_f32
+            };
+            if current_value == 0.0 {
+                continue;
+            }
+            let evidence = (other_occurances as f32) / (all_words as f32);
+            evidences.insert(id.to_string(), current_value * evidence);
+        }
+    }
+    
+    let mut results: Vec<(String, f32)> = Vec::new();
+    for (id, document) in &corpus.documents {
+
+        let likelihood: f32 = match likelihoods.get(id) {
+            Some(value) => *value,
+            _ => 0.0_f32
+        };
+        
+        let evidence: f32 = match evidences.get(id) {
             Some(value) => *value,
             _ => 0.0_f32
         };
 
-        if term_frequency == 0.0_f32 {
-            continue;
-        }
 
-        for (id, document) in &corpus.documents {
-            let document_term_frequency: f32 = match document.terms.get(stem) {
-                Some(value) => *value,
-                _ => 0.0_f32
-            };
-            let current_value = match results.get(id) {
-                Some(value) => *value,
-                None => 1.0_f32
-            };
-            let p = document_term_frequency*(1.0_f32/number_of_documents)/term_frequency;
-            results.insert(id.to_string(), current_value * (p/(p+(1.0_f32-p))));
-        }
+        let probability = prior*likelihood / ((prior*likelihood)+((1.0_f32-prior)*evidence));
+        results.push((id.to_string(), probability));
     }
 
+    let mut max_score = 0.0_f32;
     for (_, score) in results.clone() {
         if score > max_score {
             max_score = score;
@@ -324,6 +379,7 @@ fn search(args: Args, home_dir: String) {
         std::process::exit(1);
     }
 
+    let mut scaled_results: Vec<(String, u32)> = Vec::new();
     for (id, score) in results {
         let rank: u32 = (score * 1000000000.0_f32) as u32;
         scaled_results.push((id,rank));
@@ -339,12 +395,12 @@ fn search(args: Args, home_dir: String) {
     for (id, score) in scaled_results {
         if index >= args.flag_n {
             break;
+        } else if score == 0 {
+            continue;
         }
         match corpus.documents.get(&id) {
             Some(doc) => {
-                let score_float: f32 = score as f32;
-                let scaled_score = score_float/1000000000.0_f32;
-                let score_string: String = scaled_score.to_string();
+                let score_string: String = ((score as f32)/1000000000.0_f32).to_string();
                 println!("{}\n{}\n{}\n\n    {}\n\n",
                         doc.title.green(), doc.source, score_string.yellow(), doc.text)
             },
@@ -389,9 +445,9 @@ fn index(args: Args, home_dir: String) {
     for (id, document) in &corpus.documents {
         for (term, frequency) in &document.terms {
             // Get the inverse document frequency from the corpus
-            let term_frequency: f32 = match corpus.terms.get(term) {
+            let term_frequency: i32 = match corpus.terms.get(term) {
                 Some(count) => *count,
-                _ => 0.0_f32,
+                _ => 0,
             };
             let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n", id, term, frequency, term_frequency));
         }
