@@ -144,17 +144,29 @@ impl Corpus {
         }
     }
 
+    fn index(&mut self, home_dir: String) {
+        self.document_frequency();
+        // Calculate the term frequency inverse document frequency and write to disk
+        let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
+        //let document_list = corpus.documents.clone();
+        for (id, document) in &self.documents {
+            for (term, frequency) in &document.terms {
+                // Get the inverse document frequency from the corpus
+                let term_frequency: i32 = match self.terms.get(term) {
+                    Some(count) => *count,
+                    _ => 0,
+                };
+                let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n", id, term, frequency, term_frequency));
+            }
+        }
+        self.save(home_dir.clone());
+    }
+
     fn save(&self, home_dir: String) {
         let mut corpus_file = fs::File::create(home_dir+"/.rememberall/corpus.csv").unwrap();
         for (id, document) in &self.documents {
             let _ = corpus_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
                                           document.source, document.title, document.text, id, document.length));
-        }
-    }
-
-    fn print(&self) {
-        for (_, document) in &self.documents {
-            document.print();
         }
     }
 }
@@ -244,11 +256,6 @@ impl Document {
         self.length = term_list.len() as i32;
     }
 
-
-    fn print(&self) {
-        println!("{}\n\n{}\n", &self.title, &self.text);
-    }
-
 }
 
 fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
@@ -265,18 +272,23 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
     }
 }
 
-fn get_value(map: &HashMap<String, f32>, id: &String, default: f32) -> f32 {
-    let current_value = match map.get(id) {
-        Some(value) => *value,
+fn get_i32(map: &HashMap<String, i32>, id: &String, default: i32) -> i32 {
+    let current_value: i32 = match map.get(id) {
+        Some(value) => value.clone(),
         None => default
     };
-    return current_value
+    return current_value;
 }
 
-fn search(args: Args, home_dir: String) {
-    let corpus = Corpus::load(home_dir);
-    let number_of_documents : i32 = corpus.documents.len() as i32;
+fn get_f32(map: &HashMap<String, f32>, id: &String, default: f32) -> f32 {
+    let current_value: f32 = match map.get(id) {
+        Some(value) => value.clone(),
+        None => default
+    };
+    return current_value;
+}
 
+fn stem_arguments(args: &Args) -> HashSet<String> {
     // Stem the input.
     let mut stems: HashSet<String> = HashSet::new();
     for term in &args.arg_term {
@@ -286,6 +298,14 @@ fn search(args: Args, home_dir: String) {
                 Err(_) => stems.insert(term.clone()),
             };
     }
+    return stems;
+}
+
+fn search(args: Args, home_dir: String) {
+    let corpus = Corpus::load(home_dir);
+    let number_of_documents : i32 = corpus.documents.len() as i32;
+
+    let stems = stem_arguments(&args);
 
     // Bayesian Classification
     // For this step we need three things:
@@ -304,11 +324,8 @@ fn search(args: Args, home_dir: String) {
     for stem in &stems {
 
         for (id, document) in &corpus.documents {
-            let document_term_frequency: i32 = match document.terms.get(stem) {
-                Some(value) => *value,
-                _ => 0
-            };
-            let current_value = get_value(&likelihoods, id, 1.0_f32);
+            let document_term_frequency: i32 = get_i32(&document.terms, stem, 0);
+            let current_value = get_f32(&likelihoods, id, 1.0_f32);
             if current_value == 0.0 {
                 continue;
             }
@@ -334,15 +351,10 @@ fn search(args: Args, home_dir: String) {
                 if id == comparison_id {
                     continue;
                 }
-
-                let document_term_frequency: i32 = match comparison_document.terms.get(stem) {
-                    Some(value) => *value,
-                    _ => 0
-                };
-
+                let document_term_frequency: i32 = get_i32(&comparison_document.terms, stem, 0);
                 other_occurances += document_term_frequency;
             }
-            let current_value = get_value(&evidences, id, 1.0_f32);
+            let current_value = get_f32(&evidences, id, 1.0_f32);
             if current_value == 0.0 {
                 continue;
             }
@@ -351,54 +363,41 @@ fn search(args: Args, home_dir: String) {
         }
     }
 
+    // The Posterior
+    // Now that we have the prior, the likelihoods, and the evidence, we can calculate the
+    // posterior probability of the document being the requested document given the tokens
+    // provided in the command line arguments.
     let mut results: Vec<(String, f32)> = Vec::new();
     for (id, _) in &corpus.documents {
-        let likelihood: f32 = get_value(&likelihoods, id, 0.0_f32);
-        let evidence: f32 = get_value(&evidences, id, 0.0_f32);
+        let likelihood: f32 = get_f32(&likelihoods, id, 0.0_f32);
+        let evidence: f32 = get_f32(&evidences, id, 0.0_f32);
         let probability = prior*likelihood / ((prior*likelihood)+((1.0_f32-prior)*evidence));
-        results.push((id.to_string(), probability));
-    }
-
-    let mut max_score = 0.0_f32;
-    for (_, score) in results.clone() {
-        if score > max_score {
-            max_score = score;
+        if probability > 0_f32 {
+            results.push((id.to_string(), probability));
         }
     }
 
-    if max_score == 0.0_f32 {
-        let string: String = "No likely results found.".to_string();
-        println!("{}", string.red());
-        std::process::exit(1);
+    // Sort and slice the array of results as per necessary.
+    results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    results.reverse();
+
+    let mut num_results: usize = args.flag_n as usize;
+    if num_results > results.len() {
+        num_results = results.len();
     }
 
-    let mut scaled_results: Vec<(String, u32)> = Vec::new();
-    for (id, score) in results {
-        let rank: u32 = (score * 1000000000.0_f32) as u32;
-        scaled_results.push((id,rank));
-    }
+    // Print the relevent documents.
+    for index in 0..num_results {
+        let result = &results[(index as usize)];
 
-    scaled_results.sort_by_key(|a| a.1);
-    scaled_results.reverse();
-
-    let mut index = 0;
-
-    println!("\n");
-
-    for (id, score) in scaled_results {
-        if index >= args.flag_n {
-            break;
-        }
-        match corpus.documents.get(&id) {
+        match corpus.documents.get(&result.0) {
             Some(doc) => {
-                let score_string: String = ((score as f32)/1000000000.0_f32).to_string();
+                let score_string: String = result.1.to_string();
                 println!("{}\n{}\n{}\n\n    {}\n\n",
                         doc.title.green(), doc.source, score_string.yellow(), doc.text)
             },
             _ => continue,
         };
-
-        index +=1;
     }
 
 }
@@ -427,23 +426,8 @@ fn index(args: Args, home_dir: String) {
     for path in paths {
         // Load each file and parse into documents.
         corpus.load_text(path);
-
     }
-    corpus.document_frequency();
-    // Calculate the term frequency inverse document frequency and write to disk
-    let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
-    //let document_list = corpus.documents.clone();
-    for (id, document) in &corpus.documents {
-        for (term, frequency) in &document.terms {
-            // Get the inverse document frequency from the corpus
-            let term_frequency: i32 = match corpus.terms.get(term) {
-                Some(count) => *count,
-                _ => 0,
-            };
-            let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n", id, term, frequency, term_frequency));
-        }
-    }
-    corpus.save(home_dir.clone());
+    corpus.index(home_dir);
     println!("Index {} documents, {} terms.", corpus.documents.len(), corpus.terms.len());
 }
 
