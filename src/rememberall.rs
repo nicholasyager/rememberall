@@ -53,25 +53,7 @@ impl Corpus {
         }
     }
 
-    fn load_corpus(home_dir: String) -> Corpus {
-
-        let mut corpus: Corpus = Corpus::new();
-
-        let mut corpus_file = fs::File::open(home_dir.clone()+"/.rememberall/corpus.csv").unwrap();
-        let mut corpus_buffer = String::new();
-        let _ = corpus_file.read_to_string(&mut corpus_buffer);
-        let mut corpus_csv_reader = csv::Reader::from_string(corpus_buffer).has_headers(false);
-        for row in corpus_csv_reader.decode() {
-            let (source, title, text, id, length): (String, String, String, String, i32) = row.unwrap();
-            corpus.documents.insert(id, Document {
-                title: title,
-                source: source,
-                text: text.replace("<br><ul>", "\n    *   ").replace("<ul>", "*   ").replace("<br>","\n       "),
-                terms: HashMap::new(),
-                length: length
-            });
-        }
-
+    fn load_indices(&mut self, home_dir: String) {
         // Load the index.
         let mut index_file = fs::File::open(home_dir+"/.rememberall/index.csv").unwrap();
         let mut index_buffer = String::new();
@@ -82,12 +64,38 @@ impl Corpus {
         for row in index_csv_reader.decode() {
             let (id, word, doc_freq, term_freq): (String, String, i32, i32) = row.unwrap();
 
-            match corpus.documents.get_mut(&id) {
+            match self.documents.get_mut(&id) {
                 Some(doc) => doc.terms.insert(word.clone(), doc_freq),
                 _ => continue
             };
-            corpus.terms.insert(word, term_freq);
+            &self.terms.insert(word, term_freq);
         }
+    }
+
+    fn load_corpus(&mut self, home_dir: String) {
+        let mut corpus_file = fs::File::open(home_dir.clone()+"/.rememberall/corpus.csv").unwrap();
+        let mut corpus_buffer = String::new();
+        let _ = corpus_file.read_to_string(&mut corpus_buffer);
+        let mut corpus_csv_reader = csv::Reader::from_string(corpus_buffer).has_headers(false);
+        for row in corpus_csv_reader.decode() {
+            let (source, title, text, id, length): (String, String, String, String, i32) = row.unwrap();
+            self.documents.insert(id, Document {
+                title: title,
+                source: source,
+                text: text.replace("<br><ul>", "\n    *   ").replace("<ul>", "*   ").replace("<br>","\n       "),
+                terms: HashMap::new(),
+                length: length
+            });
+        }
+
+    }
+
+    fn load(home_dir: String) -> Corpus {
+
+        let mut corpus: Corpus = Corpus::new();
+        corpus.load_corpus(home_dir.clone());
+        corpus.load_indices(home_dir);
+
         return corpus;
     }
 
@@ -123,7 +131,6 @@ impl Corpus {
     }
 
     fn document_frequency(&mut self) {
-        let number_of_documents = self.documents.len() as i32;
         for (_, document) in &mut self.documents {
 
             for (term, _) in &mut document.terms {
@@ -215,9 +222,6 @@ impl Document {
         let text = merged.replace("<ul>"," ").replace("["," ").replace("**"," ").replace(":","").to_string();
         let term_list: Vec<&str> = text.split_whitespace().collect();
 
-        let mut stems: HashSet<String> = HashSet::new();
-
-
         for term in term_list.clone() {
 
             // Clense the terms. Make lowercase and remove extra symobls.
@@ -261,9 +265,16 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
     }
 }
 
+fn get_value(map: &HashMap<String, f32>, id: &String, default: f32) -> f32 {
+    let current_value = match map.get(id) {
+        Some(value) => *value,
+        None => default
+    };
+    return current_value
+}
 
 fn search(args: Args, home_dir: String) {
-    let corpus = Corpus::load_corpus(home_dir);
+    let corpus = Corpus::load(home_dir);
     let number_of_documents : i32 = corpus.documents.len() as i32;
 
     // Stem the input.
@@ -276,20 +287,18 @@ fn search(args: Args, home_dir: String) {
             };
     }
 
-
-
     // Bayesian Classification
     // For this step we need three things:
     // 1. The prior probability of this document being chosen.
     // 2. The likelihood of the words occuring in the document
     // 3. The evidence. This is the hard part.
-    
+
     // The Prior
     let prior: f32 = 1_f32 / (number_of_documents as f32);
 
 
     // The likelihood.
-    // This can be described as the mutliplication of all of the 
+    // This can be described as the mutliplication of all of the
     // document_term_frequencies for each stem and document.
     let mut likelihoods: HashMap<String, f32> = HashMap::new();
     for stem in &stems {
@@ -299,21 +308,18 @@ fn search(args: Args, home_dir: String) {
                 Some(value) => *value,
                 _ => 0
             };
-            let current_value = match likelihoods.get(id) {
-                Some(value) => *value,
-                None => 1.0_f32
-            };
+            let current_value = get_value(&likelihoods, id, 1.0_f32);
             if current_value == 0.0 {
                 continue;
             }
-            let likelihood = (document_term_frequency as f32) / (document.length as f32); 
+            let likelihood = (document_term_frequency as f32) / (document.length as f32);
             likelihoods.insert(id.to_string(), current_value * likelihood);
         }
     }
 
     // The Evidence.
     // For each document, calculate add the likelihood to the inverse of the
-    // likelihood. That is, the inverse prior and the probability of 
+    // likelihood. That is, the inverse prior and the probability of
     // obserserving the word in all of the other documents.
     let mut evidences: HashMap<String, f32> = HashMap::new();
     let mut all_words = 0;
@@ -322,7 +328,7 @@ fn search(args: Args, home_dir: String) {
     }
 
     for stem in &stems {
-        for (id, document) in &corpus.documents {
+        for (id, _) in &corpus.documents {
             let mut other_occurances = 0;
             for (comparison_id, comparison_document) in &corpus.documents {
                 if id == comparison_id {
@@ -336,10 +342,7 @@ fn search(args: Args, home_dir: String) {
 
                 other_occurances += document_term_frequency;
             }
-             let current_value = match evidences.get(id) {
-                Some(value) => *value,
-                None => 1.0_f32
-            };
+            let current_value = get_value(&evidences, id, 1.0_f32);
             if current_value == 0.0 {
                 continue;
             }
@@ -347,21 +350,11 @@ fn search(args: Args, home_dir: String) {
             evidences.insert(id.to_string(), current_value * evidence);
         }
     }
-    
+
     let mut results: Vec<(String, f32)> = Vec::new();
-    for (id, document) in &corpus.documents {
-
-        let likelihood: f32 = match likelihoods.get(id) {
-            Some(value) => *value,
-            _ => 0.0_f32
-        };
-        
-        let evidence: f32 = match evidences.get(id) {
-            Some(value) => *value,
-            _ => 0.0_f32
-        };
-
-
+    for (id, _) in &corpus.documents {
+        let likelihood: f32 = get_value(&likelihoods, id, 0.0_f32);
+        let evidence: f32 = get_value(&evidences, id, 0.0_f32);
         let probability = prior*likelihood / ((prior*likelihood)+((1.0_f32-prior)*evidence));
         results.push((id.to_string(), probability));
     }
@@ -395,8 +388,6 @@ fn search(args: Args, home_dir: String) {
     for (id, score) in scaled_results {
         if index >= args.flag_n {
             break;
-        } else if score == 0 {
-            continue;
         }
         match corpus.documents.get(&id) {
             Some(doc) => {
@@ -464,8 +455,8 @@ fn main() {
 
     // Get the user's home directory
 
-    let mut home_dir: String = String::new();
-    
+    let home_dir: String;
+
     match env::home_dir() {
         Some(path) => {
             home_dir = path.to_str().unwrap().to_string();
@@ -475,7 +466,6 @@ fn main() {
             std::process::exit(0);
         },
     };
-
 
     if args.cmd_index {
         index(args, home_dir);
