@@ -37,7 +37,7 @@ struct Args {
     cmd_search: bool,
     flag_n: isize,
     arg_directory: Vec<String>,
-    arg_term: Vec<String>
+    arg_term: Vec<String>,
 }
 
 struct Corpus {
@@ -49,13 +49,13 @@ impl Corpus {
     fn new() -> Corpus {
         return Corpus {
             documents: HashMap::new(),
-            terms: HashMap::new()
-        }
+            terms: HashMap::new(),
+        };
     }
 
     fn load_indices(&mut self, home_dir: String) {
         // Load the index.
-        let mut index_file = fs::File::open(home_dir+"/.rememberall/index.csv").unwrap();
+        let mut index_file = fs::File::open(home_dir + "/.rememberall/index.csv").unwrap();
         let mut index_buffer = String::new();
         let _ = index_file.read_to_string(&mut index_buffer);
 
@@ -66,26 +66,31 @@ impl Corpus {
 
             match self.documents.get_mut(&id) {
                 Some(doc) => doc.terms.insert(word.clone(), doc_freq),
-                _ => continue
+                _ => continue,
             };
             &self.terms.insert(word, term_freq);
         }
     }
 
     fn load_corpus(&mut self, home_dir: String) {
-        let mut corpus_file = fs::File::open(home_dir.clone()+"/.rememberall/corpus.csv").unwrap();
+        let mut corpus_file = fs::File::open(home_dir.clone() + "/.rememberall/corpus.csv")
+            .unwrap();
         let mut corpus_buffer = String::new();
         let _ = corpus_file.read_to_string(&mut corpus_buffer);
         let mut corpus_csv_reader = csv::Reader::from_string(corpus_buffer).has_headers(false);
         for row in corpus_csv_reader.decode() {
-            let (source, title, text, id, length): (String, String, String, String, i32) = row.unwrap();
-            self.documents.insert(id, Document {
-                title: title,
-                source: source,
-                text: text.replace("<br><ul>", "\n    *   ").replace("<ul>", "*   ").replace("<br>","\n       "),
-                terms: HashMap::new(),
-                length: length
-            });
+            let (source, title, text, id, length): (String, String, String, String, i32) =
+                row.unwrap();
+            self.documents.insert(id,
+                                  Document {
+                                      title: title,
+                                      source: source,
+                                      text: text.replace("<br><ul>", "\n    *   ")
+                                          .replace("<ul>", "*   ")
+                                          .replace("<br>", "\n       "),
+                                      terms: HashMap::new(),
+                                      length: length,
+                                  });
         }
 
     }
@@ -99,7 +104,7 @@ impl Corpus {
         return corpus;
     }
 
-    fn load_text(&mut self, path: String)  {
+    fn load_text(&mut self, path: String) {
         // Initialize some values
         let mut index = 0;
 
@@ -147,8 +152,9 @@ impl Corpus {
     fn index(&mut self, home_dir: String) {
         self.document_frequency();
         // Calculate the term frequency inverse document frequency and write to disk
-        let mut index_file = fs::File::create(home_dir.clone()+"/.rememberall/index.csv").unwrap();
-        //let document_list = corpus.documents.clone();
+        let mut index_file = fs::File::create(home_dir.clone() + "/.rememberall/index.csv")
+            .unwrap();
+        // let document_list = corpus.documents.clone();
         for (id, document) in &self.documents {
             for (term, frequency) in &document.terms {
                 // Get the inverse document frequency from the corpus
@@ -156,17 +162,25 @@ impl Corpus {
                     Some(count) => *count,
                     _ => 0,
                 };
-                let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n", id, term, frequency, term_frequency));
+                let _ = index_file.write_fmt(format_args!("\"{}\",\"{}\",{},{}\n",
+                                                          id,
+                                                          term,
+                                                          frequency,
+                                                          term_frequency));
             }
         }
         self.save(home_dir.clone());
     }
 
     fn save(&self, home_dir: String) {
-        let mut corpus_file = fs::File::create(home_dir+"/.rememberall/corpus.csv").unwrap();
+        let mut corpus_file = fs::File::create(home_dir + "/.rememberall/corpus.csv").unwrap();
         for (id, document) in &self.documents {
             let _ = corpus_file.write_fmt(format_args!("\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"\n",
-                                          document.source, document.title, document.text, id, document.length));
+                                                       document.source,
+                                                       document.title,
+                                                       document.text,
+                                                       id,
+                                                       document.length));
         }
     }
 }
@@ -176,7 +190,7 @@ struct Document {
     source: String,
     text: String,
     terms: HashMap<String, i32>,
-    length: i32
+    length: i32,
 }
 
 impl Clone for Document {
@@ -186,13 +200,12 @@ impl Clone for Document {
             source: self.source.clone(),
             text: self.text.clone(),
             terms: self.terms.clone(),
-            length: self.length.clone()
-        }
+            length: self.length.clone(),
+        };
     }
 }
 
 impl Document {
-
     fn parse(content: String) -> Document {
 
         // Initialize variables
@@ -207,10 +220,10 @@ impl Document {
         for line in lines {
             if index == 0 {
                 // This is the first line. It is the title
-                title = line.trim().replace("\"","'").to_string();
+                title = line.trim().replace("\"", "'").to_string();
             } else {
                 // This is the text. If the current text is not empty, add a space.
-                let filtered_line = line.replace("    ","\t");
+                let filtered_line = line.replace("    ", "\t");
                 text.push_str("<ul>");
                 text.push_str(filtered_line.trim_left());
             }
@@ -220,25 +233,38 @@ impl Document {
         return Document {
             title: title,
             source: String::new(),
-            text: text.trim_right().replace("\n","<br>").replace("\"","'").replace("\t"," ")
-                      .to_string().replace('"', "'"),
+            text: text.trim_right()
+                .replace("\n", "<br>")
+                .replace("\"", "'")
+                .replace("\t", " ")
+                .to_string()
+                .replace('"', "'"),
             terms: HashMap::new(),
-            length: 0
-        }
+            length: 0,
+        };
 
     }
 
     fn term_frequency(&mut self) {
         // Calculate the term frequency for all of the terms in the document.
         let merged = self.text.clone() + " " + &self.title;
-        let text = merged.replace("<ul>"," ").replace("["," ").replace("**"," ").replace(":","").to_string();
+        let text = merged.replace("<ul>", " ")
+            .replace("[", " ")
+            .replace("**", " ")
+            .replace(":", "")
+            .to_string();
         let term_list: Vec<&str> = text.split_whitespace().collect();
 
         for term in term_list.clone() {
 
             // Clense the terms. Make lowercase and remove extra symobls.
-            let clean_term = term.to_lowercase().replace(".", "").replace("\t"," ")
-            .replace(",","").replace("\"","").replace("<br>", " ").replace("<li>", "");
+            let clean_term = term.to_lowercase()
+                .replace(".", "")
+                .replace("\t", " ")
+                .replace(",", "")
+                .replace("\"", "")
+                .replace("<br>", " ")
+                .replace("<li>", "");
 
             let s = stem::get(&clean_term);
             let stem = match s {
@@ -255,18 +281,17 @@ impl Document {
         }
         self.length = term_list.len() as i32;
     }
-
 }
 
 fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
     for entry in glob(&glob_string).expect("Failed to read glob pattern") {
         match entry {
-            Ok(path) =>  {
+            Ok(path) => {
                 match path.to_str() {
                     None => panic!("new path is not a valid UTF-8 sequence"),
                     Some(string) => paths.push(string.to_string()),
                 }
-            },
+            }
             Err(e) => println!("{:?}", e),
         }
     }
@@ -275,7 +300,7 @@ fn scan_directory(glob_string: String, paths: &mut Vec<String>) {
 fn get_i32(map: &HashMap<String, i32>, id: &String, default: i32) -> i32 {
     let current_value: i32 = match map.get(id) {
         Some(value) => value.clone(),
-        None => default
+        None => default,
     };
     return current_value;
 }
@@ -283,7 +308,7 @@ fn get_i32(map: &HashMap<String, i32>, id: &String, default: i32) -> i32 {
 fn get_f32(map: &HashMap<String, f32>, id: &String, default: f32) -> f32 {
     let current_value: f32 = match map.get(id) {
         Some(value) => value.clone(),
-        None => default
+        None => default,
     };
     return current_value;
 }
@@ -292,18 +317,18 @@ fn stem_arguments(args: &Args) -> HashSet<String> {
     // Stem the input.
     let mut stems: HashSet<String> = HashSet::new();
     for term in &args.arg_term {
-            let s = stem::get(&term);
-            match s {
-                Ok(stemmed) => stems.insert(stemmed),
-                Err(_) => stems.insert(term.clone()),
-            };
+        let s = stem::get(&term);
+        match s {
+            Ok(stemmed) => stems.insert(stemmed),
+            Err(_) => stems.insert(term.clone()),
+        };
     }
     return stems;
 }
 
 fn search(args: Args, home_dir: String) {
     let corpus = Corpus::load(home_dir);
-    let number_of_documents : i32 = corpus.documents.len() as i32;
+    let number_of_documents: i32 = corpus.documents.len() as i32;
 
     let stems = stem_arguments(&args);
 
@@ -371,7 +396,8 @@ fn search(args: Args, home_dir: String) {
     for (id, _) in &corpus.documents {
         let likelihood: f32 = get_f32(&likelihoods, id, 0.0_f32);
         let evidence: f32 = get_f32(&evidences, id, 0.0_f32);
-        let probability = prior*likelihood / ((prior*likelihood)+((1.0_f32-prior)*evidence));
+        let probability = prior * likelihood /
+                          ((prior * likelihood) + ((1.0_f32 - prior) * evidence));
         if probability > 0_f32 {
             results.push((id.to_string(), probability));
         }
@@ -394,8 +420,11 @@ fn search(args: Args, home_dir: String) {
             Some(doc) => {
                 let score_string: String = result.1.to_string();
                 println!("{}\n{}\n{}\n\n    {}\n\n",
-                        doc.title.green(), doc.source, score_string.yellow(), doc.text)
-            },
+                         doc.title.green(),
+                         doc.source,
+                         score_string.yellow(),
+                         doc.text)
+            }
             _ => continue,
         };
     }
@@ -428,14 +457,16 @@ fn index(args: Args, home_dir: String) {
         corpus.load_text(path);
     }
     corpus.index(home_dir);
-    println!("Index {} documents, {} terms.", corpus.documents.len(), corpus.terms.len());
+    println!("Index {} documents, {} terms.",
+             corpus.documents.len(),
+             corpus.terms.len());
 }
 
 fn main() {
     // Parse the command line arguments to get a list of directories to scan.
     let args: Args = Docopt::new(USAGE)
-    .and_then(|d| d.decode())
-    .unwrap_or_else(|e| e.exit());
+        .and_then(|d| d.decode())
+        .unwrap_or_else(|e| e.exit());
 
     // Get the user's home directory
 
@@ -444,11 +475,11 @@ fn main() {
     match env::home_dir() {
         Some(path) => {
             home_dir = path.to_str().unwrap().to_string();
-        },
+        }
         None => {
             println!("Please set your $HOME variable");
             std::process::exit(0);
-        },
+        }
     };
 
     if args.cmd_index {
