@@ -1,3 +1,4 @@
+![rememberall-logo](https://s3.amazonaws.com/nicholasyager.com/assets/2016-09-17/rememberall.png)
 # Rememberall
 
 Rememberall is a command line document retreval system that returns relevent
@@ -18,6 +19,9 @@ To query the index
 ```
 rememberall search keyword1 keyword2 ...
 ```
+
+## Demo
+[![asciicast](https://asciinema.org/a/86108.png)](https://asciinema.org/a/86108)
 
 ## Suggested Document Format
 This tool is best suited for files following a markdown-based format, in which
